@@ -7,7 +7,19 @@ from torch.optim import Adam
 from gcn import GraphConvolution
 import torch.nn as nn
 
-loss_fn = torch.nn.MSELoss()
+class RMSE():
+    def __call__(self, x, y):
+        return torch.mean(torch.sqrt(torch.sum(torch.sum((x-y)**2, -1), -1)))
+
+class MSE():
+    def __call__(self, x, y):
+        return torch.mean(torch.sum(torch.sum((x-y)**2, -1), -1))
+
+class MAPE():
+    def __call__(self, x, y):
+        return torch.mean(torch.sum(torch.sum((torch.log(x.add(1)) - torch.log(y.add(1)))**2, -1), -1))
+    
+loss_fn = MAPE()#torch.nn.MSELoss(reduction='mean')
 
 np.random.shuffle(data)
 train_data = data[:int(len(data)*0.8)]
@@ -19,7 +31,7 @@ def normalize(data):
     return (data - max_)/(max_ - min_)
 
 batch_size = 1024
-epochs = 2
+epochs = 20
 dropout = 0
 
 device = torch.device("cuda")
@@ -27,11 +39,12 @@ device = torch.device("cuda")
 #encoder = Encoder().to(device)
 #decoder = Decoder().to(device)
 trainer = Trainer3(dropout).to(device)
-trainer_optim = Adam(trainer.parameters(), 0.001)
+trainer_optim = Adam(trainer.parameters(), 0.01)
 #decoder_optim = Adam(decoder.parameters(), 0.001)
 
 
 def test():
+    trainer.eval()
     all_loss = []
     for i, xs in enumerate(yield_data(val_data, batch_size)):
         b = xs.shape[0]
@@ -41,13 +54,12 @@ def test():
         out = trainer(xs, adj, invadj)
         
 #        loss = torch.mean(torch.sqrt(torch.sum(torch.sum((xs-out)**2, -1), -1)))
-        loss = loss_fn(xs.view(b, -1), out.view(b, -1))
+        loss = loss_fn(xs, out)
         all_loss.append(loss.cpu().data.numpy())
     return np.mean(all_loss)
 
 
-adj = torch.FloatTensor(normalize(L)).to(device)
-invadj = torch.FloatTensor(normalize(np.linalg.inv(L))).to(device)
+
 #invadj = torch.FloatTensor(np.linalg.inv(L)).to(device)
 #invadj = torch.FloatTensor(np.linalg.inv(lplc)).to(device)
 #invadj = torch.FloatTensor(np.ones([24,24])).to(device)
@@ -58,13 +70,18 @@ test_loss = []
 p = len(train_data)//batch_size + 1 
 for e in range(epochs): 
     for i, xs in enumerate(yield_data(train_data, batch_size)):
+        
+        adj = torch.FloatTensor(lplc).to(device)
+        invadj = torch.FloatTensor(normalize(np.linalg.inv(L))).to(device)
+        
+        trainer.train(True)
         b = xs.shape[0]
         xs = torch.FloatTensor(xs).to(device)
         xs = xs.reshape(*xs.shape, 1)
         
         out = trainer(xs, adj, invadj)
         
-        loss = loss_fn(xs.view(b, -1), out.view(b, -1))
+        loss = loss_fn(xs, out)
         trainer_optim.zero_grad()
         loss.backward()
         trainer_optim.step()
@@ -76,7 +93,7 @@ for e in range(epochs):
             l = test()
             test_loss.append((e*p+i, l))
             print('e:{}/{}, i:{}/{}, loss:{}  test_loss:{}'.format(e, epochs, i,
-                  len(data)//batch_size, sloss, l))
+                  len(train_data)//batch_size, sloss, l))
 
 result = {
     'train_loss': train_loss,
@@ -114,8 +131,11 @@ import pickle as pk
 with open(save_path + '.pkl', 'wb') as f:
     pk.dump(result, f)
     
+with open(save_path + '.model', 'wb') as f:
+    torch.save(trainer, f)
+    
 import matplotlib.pyplot as plt
-plt.figure()
+plt.figure(figsize=(8,8), dpi=300)
 plt.plot(*np.array(train_loss).T, label='train_loss')
 plt.plot(*np.array(test_loss).T, label='test_loss')
 plt.legend()

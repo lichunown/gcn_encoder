@@ -26,10 +26,10 @@ def read_data():
     G.add_weighted_edges_from([(str(i), str(i), 1) for i in range(n_start, n_end + 1)])
     
     A = nx.adjacency_matrix(G).todense()
-    D = np.eye(n_end - n_start + 1)
-    D[list(range(n_end - n_start + 1)),list(range(n_end - n_start + 1))] = np.sum(A, 0)
+    Ds = np.eye(n_end - n_start + 1)
+    Ds[list(range(n_end - n_start + 1)),list(range(n_end - n_start + 1))] = np.power(np.sum(A, 0), -1/2)
 #    L = D - A
-    L = np.dot(np.dot(D**(1/2), A), D**(1/2))
+    L = np.dot(np.dot(Ds, A), Ds)
     # N = D^{-1/2} L D^{-1/2}
     lplc = nx.normalized_laplacian_matrix(G).todense()
     
