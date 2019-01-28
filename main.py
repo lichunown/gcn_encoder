@@ -1,7 +1,7 @@
 import torch, os
 import numpy as np
 
-from utils import lplc, data, yield_data, L
+from utils import lplc24, data24, yield_data, L24, D24, yield_data_n, data_artificial, lplc_artificial
 from model import Encoder, Decoder, Trainer1, Trainer3, Trainer2
 from torch.optim import Adam
 from gcn import GraphConvolution
@@ -21,6 +21,14 @@ class MAPE():
     
 loss_fn = MAPE()#torch.nn.MSELoss(reduction='mean')
 
+othername = 'boiler'
+
+data = data24.copy()
+lplc = lplc24.copy() 
+
+#data = data_artificial.copy()
+#lplc = lplc_artificial.copy()
+
 np.random.shuffle(data)
 train_data = data[:int(len(data)*0.8)]
 val_data = data[int(len(data)*0.8):]
@@ -30,15 +38,17 @@ def normalize(data):
     max_ = np.max(data)
     return (data - max_)/(max_ - min_)
 
-batch_size = 1024
-epochs = 20
+batch_size = 512
+epochs = 40
 dropout = 0
+
+yield_n = 1
 
 device = torch.device("cuda")
 
 #encoder = Encoder().to(device)
 #decoder = Decoder().to(device)
-trainer = Trainer3(dropout).to(device)
+trainer = Trainer3(in_features=yield_n, in_dim=24, out_features=yield_n*8, out_dim=2, dropout=dropout).to(device)
 trainer_optim = Adam(trainer.parameters(), 0.01)
 #decoder_optim = Adam(decoder.parameters(), 0.001)
 
@@ -46,11 +56,9 @@ trainer_optim = Adam(trainer.parameters(), 0.01)
 def test():
     trainer.eval()
     all_loss = []
-    for i, xs in enumerate(yield_data(val_data, batch_size)):
-        b = xs.shape[0]
+    for i, xs in enumerate(yield_data_n(val_data, batch_size, yield_n)):
         xs = torch.FloatTensor(xs).to(device)
-        xs = xs.reshape(*xs.shape, 1)
-        
+        invadj = None
         out = trainer(xs, adj, invadj)
         
 #        loss = torch.mean(torch.sqrt(torch.sum(torch.sum((xs-out)**2, -1), -1)))
@@ -69,15 +77,15 @@ test_loss = []
 
 p = len(train_data)//batch_size + 1 
 for e in range(epochs): 
-    for i, xs in enumerate(yield_data(train_data, batch_size)):
+    for i, xs in enumerate(yield_data_n(train_data, batch_size, yield_n)):
         
         adj = torch.FloatTensor(lplc).to(device)
-        invadj = torch.FloatTensor(normalize(np.linalg.inv(L))).to(device)
+#        adj = torch.FloatTensor(np.dot(np.linalg.inv(D), lplc)).to(device)
+#        invadj = torch.FloatTensor(normalize(np.linalg.inv(L))).to(device)
+        invadj = None
         
         trainer.train(True)
-        b = xs.shape[0]
         xs = torch.FloatTensor(xs).to(device)
-        xs = xs.reshape(*xs.shape, 1)
         
         out = trainer(xs, adj, invadj)
         
@@ -119,8 +127,8 @@ for name, layer in trainer.decoder.named_modules():
         decoder_layers.append('dd{}'.format(layer.out_features))
 
 
-save_name = '_'.join([str(item) for item in [
-                        trainer.__class__.__name__, 'epochs', epochs, 
+save_name = '_'.join([str(item) for item in [othername,
+                        trainer.__class__.__name__, 'epochs', epochs, 'yieldn', yield_n,
                         'batch', batch_size, 'drop', dropout, 
                         loss_fn.__class__.__name__, trainer_optim.__class__.__name__, 
                         'lr', trainer_optim.defaults['lr'], *encoder_layers, *decoder_layers
@@ -141,3 +149,11 @@ plt.plot(*np.array(test_loss).T, label='test_loss')
 plt.legend()
 plt.savefig(save_path + '.png')
 
+r = []
+trainer.eval()
+for i, xs in enumerate(yield_data_n(data, batch_size, yield_n, False)):
+    xs = torch.FloatTensor(xs).to(device)
+    adj = torch.FloatTensor(lplc).to(device)
+    r.append(trainer.encoder(xs, adj).cpu().data.numpy())
+result = np.concatenate(r)
+np.save(save_path+'_encoding.npy', result)
