@@ -227,7 +227,9 @@ class Trainer(nn.Module):
         
     def forward(self, origin, adj):
         encode = self.encoder(origin, adj)
-        decode = self.decoder(encode, adj.transpose(1, 0))
+        if adj is not None:
+            adj = adj.transpose(1, 0)
+        decode = self.decoder(encode, adj)
         return decode
         
         
