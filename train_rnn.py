@@ -7,22 +7,22 @@ import pickle as pk
 
 from model import Trainer, Encoder_RNN, Decoder_RNN
 from data_process import create_graph, yield_data_time
-from utils import MSE, normalize
+from utils import MSE, VAELoss, normalize
 
-batch_size = 512
+batch_size = 256
 epochs = 100
 seq_len = 10
 nodes_nums = 424
-encode_dim = 2
+encode_dim = 10
 
 save_parent_dir = './result/rnn_new'
-save_child_dir = 'encode{}_seqlen'.format(encode_dim, seq_len)
+save_child_dir = 'vae_encode{}_seqlen'.format(encode_dim, seq_len)
 save_dir = os.path.join(save_parent_dir, save_child_dir)
 
 if not os.path.exists(save_dir):
     os.makedirs(save_dir)
     
-save_name = 'finfull'
+save_name = 'VAELoss'
 save_name = os.path.join(save_dir, save_name)
 
 graph_data = np.load('data/new/result_fin.npy')
@@ -46,7 +46,7 @@ encoder = Encoder_RNN(channel_num_list=[1, 16], dense_num_list=[(16)*nodes_nums,
 decoder = Decoder_RNN(channel_num_list=[16, 1], dense_num_list=[encode_dim, (16)*nodes_nums], seq_len = seq_len, nodes_nums=nodes_nums, dropout=0.).to(device)
 trainer = Trainer(encoder, decoder).to(device)
 optimizer = optim.Adam(trainer.parameters())
-loss_fn = MSE()
+loss_fn = VAELoss()
 
 
 adj = torch.FloatTensor(adj).to(device)
@@ -58,8 +58,8 @@ def evaluate(model, val_data, batch_size, seq_len):
     loss_all = []
     for i, xs_seq in enumerate(yield_data_time(val_data, batch_size, seq_len)):
         xs_seq = torch.FloatTensor(xs_seq).to(device)
-        out = model(xs_seq, adj)
-        loss = loss_fn(xs_seq, out, [0, 1])
+        out, mu, logvar = model(xs_seq, adj)
+        loss = loss_fn(xs_seq, out, mu, logvar, [0, 1])
         loss_all.append(loss.cpu().data.numpy())
     return np.mean(loss_all)
 
@@ -71,8 +71,8 @@ def train_epoch(data, batch_size, seq_len, val_data = None, show_iter=None, show
     for i, xs_seq in enumerate(yield_data_time(data, batch_size, seq_len)):
         trainer.train(True)
         xs_seq = torch.FloatTensor(xs_seq).to(device)
-        out = trainer(xs_seq, adj)
-        loss = loss_fn(xs_seq, out, [0, 1])
+        out, mu, std = trainer(xs_seq, adj)
+        loss = loss_fn(xs_seq, out, mu, std, [0, 1])
         optimizer.zero_grad()
         loss.backward()
         optimizer.step()
@@ -87,8 +87,8 @@ def train_epoch(data, batch_size, seq_len, val_data = None, show_iter=None, show
         eval_loss_all = []
         for i, xs_seq in enumerate(yield_data_time(val_data, batch_size, seq_len)):
             xs_seq = torch.FloatTensor(xs_seq).to(device)
-            out = trainer(xs_seq, adj)
-            loss = loss_fn(xs_seq, out, [0, 1])
+            out, mu, logvar = trainer(xs_seq, adj)
+            loss = loss_fn(xs_seq, out, mu, logvar, [0, 1])
             eval_loss_all.append(loss.cpu().data.numpy())
         val_loss = np.mean(eval_loss_all)
         print('{}  val_loss:{}'.format(show_forward_info, val_loss))
